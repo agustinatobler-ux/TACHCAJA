@@ -37,7 +37,7 @@ export function roas(t: AdTotals) {
 }
 
 export function formatCurrency(n: number) {
-  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n);
+  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 2 }).format(n);
 }
 
 export function formatNumber(n: number) {
