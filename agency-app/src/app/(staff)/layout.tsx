@@ -19,6 +19,9 @@ export default async function StaffLayout({ children }: { children: React.ReactN
             <Link href="/app/projects" className="hover:text-neutral-900">
               Proyectos
             </Link>
+            <Link href="/app/ads" className="hover:text-neutral-900">
+              Publicidad
+            </Link>
           </nav>
         </div>
         <div className="flex items-center gap-3 text-sm text-neutral-500">
