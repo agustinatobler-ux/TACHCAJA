@@ -43,6 +43,19 @@ export async function connectMetaAccounts(formData: FormData) {
   redirect("/app/ads");
 }
 
+export async function updateAdAccountClient(formData: FormData) {
+  const adAccountId = String(formData.get("ad_account_id") ?? "");
+  const clientId = String(formData.get("client_id") ?? "") || null;
+  if (!adAccountId) throw new Error("Falta la cuenta");
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("ad_accounts").update({ client_id: clientId }).eq("id", adAccountId);
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/app/ads/connect/meta");
+  revalidatePath("/app/ads");
+}
+
 function isoDaysAgo(days: number) {
   const d = new Date();
   d.setDate(d.getDate() - days);
