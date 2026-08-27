@@ -37,36 +37,9 @@ export async function proxy(request: NextRequest) {
   }
 
   if (user && isAuthRoute) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single();
-
     const url = request.nextUrl.clone();
-    url.pathname = profile?.role === "client" ? "/portal" : "/app";
+    url.pathname = "/app";
     return NextResponse.redirect(url);
-  }
-
-  if (user) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single();
-
-    const isClient = profile?.role === "client";
-
-    if (isClient && path.startsWith("/app")) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/portal";
-      return NextResponse.redirect(url);
-    }
-    if (!isClient && path.startsWith("/portal")) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/app";
-      return NextResponse.redirect(url);
-    }
   }
 
   return response;

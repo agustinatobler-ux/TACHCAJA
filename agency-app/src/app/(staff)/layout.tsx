@@ -8,16 +8,13 @@ export default async function StaffLayout({ children }: { children: React.ReactN
     <div className="min-h-screen bg-neutral-50">
       <header className="flex items-center justify-between border-b border-neutral-200 bg-white px-6 py-3">
         <div className="flex items-center gap-6">
-          <span className="font-semibold text-neutral-900">Agencia</span>
+          <span className="font-semibold text-neutral-900">Panel de Pauta</span>
           <nav className="flex gap-4 text-sm text-neutral-600">
             <Link href="/app" className="hover:text-neutral-900">
               Dashboard
             </Link>
             <Link href="/app/clients" className="hover:text-neutral-900">
               Clientes
-            </Link>
-            <Link href="/app/projects" className="hover:text-neutral-900">
-              Proyectos
             </Link>
             <Link href="/app/ads" className="hover:text-neutral-900">
               Publicidad
@@ -33,7 +30,7 @@ export default async function StaffLayout({ children }: { children: React.ReactN
           </form>
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
+      <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
     </div>
   );
 }

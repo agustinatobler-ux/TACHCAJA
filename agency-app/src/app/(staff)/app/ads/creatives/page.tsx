@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { emptyTotals, addTotals, ctr, cpa, roas, formatCurrency, type AdTotals } from "@/lib/ads-metrics";
+import { ClientFilterSelect } from "@/components/client-filter-select";
 
 interface CreativeMetricRow {
   spend: number;
@@ -13,7 +14,7 @@ interface CreativeMetricRow {
     image_url: string | null;
     video_url: string | null;
     headline: string | null;
-    ad_campaigns: { ad_accounts: { platform: string } | null } | null;
+    ad_campaigns: { ad_accounts: { platform: string; client_id: string | null } | null } | null;
   } | null;
 }
 
@@ -22,47 +23,62 @@ type SortKey = "roas" | "cpa" | "ctr";
 export default async function CreativeHubPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sort?: string }>;
+  searchParams: Promise<{ sort?: string; client?: string }>;
 }) {
-  const { sort } = await searchParams;
+  const { sort, client: clientFilter } = await searchParams;
   const sortKey: SortKey = sort === "cpa" || sort === "ctr" ? sort : "roas";
 
   const supabase = await createClient();
   const since = new Date();
   since.setDate(since.getDate() - 30);
 
-  const { data: rawMetrics } = await supabase
-    .from("ad_creative_metrics_daily")
-    .select(
-      "spend, impressions, clicks, conversions, ad_creatives(id, name, image_url, video_url, headline, ad_campaigns(ad_accounts(platform)))",
-    )
-    .gte("date", since.toISOString().slice(0, 10));
+  const [{ data: rawMetrics }, { data: clients }] = await Promise.all([
+    supabase
+      .from("ad_creative_metrics_daily")
+      .select(
+        "spend, impressions, clicks, conversions, ad_creatives(id, name, image_url, video_url, headline, ad_campaigns(ad_accounts(platform, client_id)))",
+      )
+      .gte("date", since.toISOString().slice(0, 10)),
+    supabase.from("clients").select("id, name").order("name"),
+  ]);
 
   const metrics = (rawMetrics ?? []) as unknown as CreativeMetricRow[];
 
   const byCreative = new Map<
     string,
-    { name: string; image: string | null; video: string | null; headline: string | null; platform: string; totals: AdTotals }
+    { name: string; image: string | null; video: string | null; headline: string | null; platform: string; clientId: string | null; totals: AdTotals }
   >();
   for (const m of metrics) {
     const c = m.ad_creatives;
     if (!c) continue;
+    const account = c.ad_campaigns?.ad_accounts;
     const existing = byCreative.get(c.id);
     byCreative.set(c.id, {
       name: c.name ?? "Sin nombre",
       image: c.image_url,
       video: c.video_url,
       headline: c.headline,
-      platform: c.ad_campaigns?.ad_accounts?.platform ?? "—",
+      platform: account?.platform ?? "—",
+      clientId: account?.client_id ?? null,
       totals: addTotals(existing?.totals ?? emptyTotals(), m),
     });
   }
 
-  const creatives = Array.from(byCreative.values()).sort((a, b) => {
-    if (sortKey === "cpa") return cpa(a.totals) - cpa(b.totals);
-    if (sortKey === "ctr") return ctr(b.totals) - ctr(a.totals);
-    return roas(b.totals) - roas(a.totals);
-  });
+  const creatives = Array.from(byCreative.values())
+    .filter((c) => !clientFilter || c.clientId === clientFilter)
+    .sort((a, b) => {
+      if (sortKey === "cpa") return cpa(a.totals) - cpa(b.totals);
+      if (sortKey === "ctr") return ctr(b.totals) - ctr(a.totals);
+      return roas(b.totals) - roas(a.totals);
+    });
+
+  const buildHref = (overrides: { sort?: string; client?: string }) => {
+    const params = new URLSearchParams();
+    params.set("sort", overrides.sort ?? sortKey);
+    const c = overrides.client ?? clientFilter;
+    if (c) params.set("client", c);
+    return `/app/ads/creatives?${params.toString()}`;
+  };
 
   return (
     <div>
@@ -71,11 +87,12 @@ export default async function CreativeHubPage({
           <h1 className="text-2xl font-semibold text-neutral-900">Mejores anuncios</h1>
           <p className="mt-1 text-sm text-neutral-500">Últimos 30 días · ordenado por {sortLabel(sortKey)}</p>
         </div>
-        <div className="flex gap-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <ClientFilterSelect clients={clients ?? []} value={clientFilter ?? ""} sort={sortKey} />
           {(["roas", "cpa", "ctr"] as SortKey[]).map((key) => (
             <Link
               key={key}
-              href={`/app/ads/creatives?sort=${key}`}
+              href={buildHref({ sort: key })}
               className={`rounded-md px-3 py-1.5 ${
                 sortKey === key ? "bg-neutral-900 text-white" : "border border-neutral-300 hover:bg-neutral-100"
               }`}
@@ -85,6 +102,24 @@ export default async function CreativeHubPage({
           ))}
         </div>
       </div>
+
+      {clientFilter && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {(clients ?? [])
+            .filter((c) => c.id === clientFilter)
+            .map((c) => (
+              <span
+                key={c.id}
+                className="flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-700"
+              >
+                {c.name}
+                <Link href={buildHref({ client: "" })} className="text-neutral-400 hover:text-neutral-700">
+                  ✕
+                </Link>
+              </span>
+            ))}
+        </div>
+      )}
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {creatives.map((c, i) => (
