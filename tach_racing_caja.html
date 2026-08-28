@@ -92,6 +92,11 @@
   .header-logo span { color: var(--green); }
   .header-sep { flex: 1; }
   .header-date { font-size: 13px; color: var(--text2); }
+  .conn-status { display:flex; align-items:center; gap:6px; font-size:12px; color: var(--text2); padding: 4px 10px; border-radius: 20px; background: var(--bg2); cursor: pointer; }
+  .conn-status .dot { width:7px; height:7px; border-radius:50%; background: var(--text3); flex-shrink:0; }
+  .conn-status.ok .dot { background: var(--green); }
+  .conn-status.off .dot { background: var(--text3); }
+  .conn-status.err .dot { background: var(--red); }
 
   /* LAYOUT */
   .layout { display: flex; min-height: calc(100vh - 56px); }
@@ -323,6 +328,7 @@
   <span style="font-size:13px;color:var(--text2);font-weight:400">Caja & Bancos</span>
   <div class="header-sep"></div>
   <div class="header-date" id="header-date"></div>
+  <div id="conn-status" class="conn-status" title="Estado de la conexión con Google Sheets"></div>
 </header>
 
 <div class="layout">
@@ -561,6 +567,24 @@
     <div id="page-config" class="page">
       <div class="page-title">Configuración</div>
       <div class="card">
+        <div class="card-title">Conexión con Google Sheets</div>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px">
+          Conectá la app a una planilla de Google Sheets para que los datos se guarden ahí (no en este navegador) y no se pierdan. Seguí la guía <code>SETUP_GOOGLE_SHEETS.md</code> del proyecto para crear la planilla y obtener la URL.
+        </p>
+        <div id="conn-alert" class="alert"></div>
+        <div class="form-row full">
+          <div>
+            <label>URL de la Web App (Google Apps Script)</label>
+            <input type="text" id="sheets-url" placeholder="https://script.google.com/macros/s/XXXXX/exec">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="guardarConexion()"><i class="ti ti-plug"></i> Conectar</button>
+          <button class="btn btn-sm" onclick="probarConexion()"><i class="ti ti-refresh"></i> Probar conexión</button>
+          <button class="btn btn-danger btn-sm" onclick="desconectarSheets()"><i class="ti ti-plug-off"></i> Desconectar (usar solo este dispositivo)</button>
+        </div>
+      </div>
+      <div class="card">
         <div class="card-title">Categorías de ingresos</div>
         <div class="categ-list" id="categs-ingreso"></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -607,6 +631,7 @@
 const SK_MOVS = 'tach_movimientos';
 const SK_EMPS = 'tach_empleados';
 const SK_CATS = 'tach_categorias';
+const SK_URL = 'tach_sheets_url';
 
 let movimientos = [], empleados = [], charts = {};
 const BUILTIN = {
@@ -615,6 +640,9 @@ const BUILTIN = {
   aporte: ['Aporte entrada', 'Retiro/extracción', 'Capital propio']
 };
 let categorias = JSON.parse(JSON.stringify(BUILTIN));
+
+let sheetsUrl = localStorage.getItem(SK_URL) || '';
+let modoRemoto = !!sheetsUrl;
 
 function loadData() {
   try { movimientos = JSON.parse(localStorage.getItem(SK_MOVS)) || []; } catch(e) { movimientos = []; }
@@ -625,13 +653,96 @@ function saveMovs() { localStorage.setItem(SK_MOVS, JSON.stringify(movimientos))
 function saveEmps() { localStorage.setItem(SK_EMPS, JSON.stringify(empleados)); }
 function saveCats() { localStorage.setItem(SK_CATS, JSON.stringify(categorias)); }
 
+/* ---- Conexión con Google Sheets (Apps Script Web App) ---- */
+
+function setConnStatus(estado, msg) {
+  const el = document.getElementById('conn-status');
+  el.className = 'conn-status ' + estado;
+  const textos = { ok: 'Conectado a Sheets', off: 'Modo local', err: 'Error de conexión' };
+  el.innerHTML = '<span class="dot"></span>' + (msg || textos[estado] || '');
+  el.onclick = () => showPage('config', document.querySelector('.nav-item[onclick*="config"]'));
+}
+
+async function apiGet() {
+  const res = await fetch(sheetsUrl + '?action=getAll');
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+
+async function apiPost(action, extra) {
+  const res = await fetch(sheetsUrl, { method: 'POST', body: JSON.stringify(Object.assign({ action }, extra)) });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || 'Error desconocido');
+  return data.result;
+}
+
+async function syncFromSheets() {
+  if (!modoRemoto) return true;
+  try {
+    const data = await apiGet();
+    movimientos = data.movimientos || [];
+    empleados = data.empleados || [];
+    categorias = (data.categorias && Object.keys(data.categorias).length) ? data.categorias : JSON.parse(JSON.stringify(BUILTIN));
+    saveMovs(); saveEmps(); saveCats(); // respaldo local por si se pierde la conexión
+    setConnStatus('ok');
+    return true;
+  } catch (err) {
+    setConnStatus('err', 'Sin conexión — mostrando última copia');
+    loadData(); // usar el último respaldo local
+    return false;
+  }
+}
+
+function guardarConexion() {
+  const url = document.getElementById('sheets-url').value.trim();
+  if (!url) { showConnAlert('Pegá la URL de la Web App.', false); return; }
+  sheetsUrl = url;
+  localStorage.setItem(SK_URL, url);
+  modoRemoto = true;
+  probarConexion();
+}
+
+async function probarConexion() {
+  if (!sheetsUrl) { showConnAlert('No hay ninguna URL configurada.', false); return; }
+  try {
+    await apiGet();
+    modoRemoto = true;
+    await syncFromSheets();
+    showConnAlert('Conectado correctamente ✓');
+    renderInicio();
+  } catch (err) {
+    setConnStatus('err');
+    showConnAlert('No se pudo conectar: ' + err.message, false);
+  }
+}
+
+function desconectarSheets() {
+  if (!confirm('¿Dejar de usar Google Sheets y guardar solo en este dispositivo?')) return;
+  localStorage.removeItem(SK_URL);
+  sheetsUrl = '';
+  modoRemoto = false;
+  loadData();
+  setConnStatus('off');
+  showConnAlert('Desconectado. Los datos se guardan solo en este navegador.');
+  renderInicio();
+}
+
+function showConnAlert(msg, ok = true) {
+  const el = document.getElementById('conn-alert');
+  el.className = 'alert ' + (ok ? 'alert-ok' : 'alert-err');
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 4000);
+}
+
 // Header date
 (function() {
   const d = new Date();
   document.getElementById('header-date').textContent = d.toLocaleDateString('es-AR', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
 })();
 
-function showPage(p, btn) {
+async function showPage(p, btn) {
   document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-item, .mobile-nav-item').forEach(el => el.classList.remove('active'));
   document.getElementById('page-' + p).classList.add('active');
@@ -639,6 +750,7 @@ function showPage(p, btn) {
   document.querySelectorAll('.nav-item, .mobile-nav-item').forEach(el => {
     if(el.getAttribute('onclick') && el.getAttribute('onclick').includes("'"+p+"'")) el.classList.add('active');
   });
+  if(modoRemoto && ['inicio','movimientos','analisis','sueldos'].includes(p)) await syncFromSheets();
   if(p === 'inicio') renderInicio();
   if(p === 'movimientos') renderMovimientos();
   if(p === 'analisis') renderAnalisis();
@@ -736,7 +848,7 @@ function showAlert(msg, ok=true) {
   setTimeout(() => el.style.display = 'none', 3500);
 }
 
-function guardarMovimiento() {
+async function guardarMovimiento() {
   const tipo = document.getElementById('tipo').value;
   const fecha = document.getElementById('fecha').value;
   const monto = parseFloat(document.getElementById('monto').value);
@@ -759,17 +871,31 @@ function guardarMovimiento() {
       mov.categoria = document.getElementById('categoria').value;
     }
   }
-  movimientos.push(mov);
-  saveMovs();
+  if(modoRemoto) {
+    try {
+      await apiPost('addMovimiento', { data: mov });
+      await syncFromSheets();
+    } catch(err) { showAlert('No se pudo guardar en Sheets: ' + err.message, false); return; }
+  } else {
+    movimientos.push(mov);
+    saveMovs();
+  }
   document.getElementById('monto').value = '';
   document.getElementById('descripcion').value = '';
   showAlert('Movimiento guardado ✓');
 }
 
-function eliminarMovimiento(id) {
+async function eliminarMovimiento(id) {
   if(!confirm('¿Eliminar este movimiento?')) return;
-  movimientos = movimientos.filter(m => m.id !== id);
-  saveMovs();
+  if(modoRemoto) {
+    try {
+      await apiPost('deleteMovimiento', { id });
+      await syncFromSheets();
+    } catch(err) { alert('No se pudo eliminar en Sheets: ' + err.message); return; }
+  } else {
+    movimientos = movimientos.filter(m => String(m.id) !== String(id));
+    saveMovs();
+  }
   renderMovimientos();
 }
 
@@ -808,7 +934,7 @@ function renderMovimientos() {
       <td style="font-size:12px;color:var(--text2)">${m.categoria||'—'}</td>
       <td style="font-size:12px">${m.moneda}</td>
       <td style="text-align:right;white-space:nowrap" class="${esPos?'amount-pos':'amount-neg'}">${esPos?'+':'-'}${fmt(m.monto, m.moneda)}</td>
-      <td><button class="btn btn-danger btn-sm" onclick="eliminarMovimiento(${m.id})" title="Eliminar"><i class="ti ti-trash"></i></button></td>
+      <td><button class="btn btn-danger btn-sm" onclick="eliminarMovimiento('${m.id}')" title="Eliminar"><i class="ti ti-trash"></i></button></td>
     </tr>`;
   }).join('');
 }
@@ -877,23 +1003,38 @@ function renderAnalisis() {
   });
 }
 
-function guardarEmpleado() {
+async function guardarEmpleado() {
   const n = document.getElementById('emp-nombre').value.trim();
   const c = document.getElementById('emp-cargo').value.trim();
   const s = parseFloat(document.getElementById('emp-sueldo').value);
   if(!n || isNaN(s)) { alert('Completá nombre y sueldo.'); return; }
-  empleados.push({ id: Date.now(), nombre: n, cargo: c, sueldo: s });
-  saveEmps();
+  const emp = { id: Date.now(), nombre: n, cargo: c, sueldo: s };
+  if(modoRemoto) {
+    try {
+      await apiPost('addEmpleado', { data: emp });
+      await syncFromSheets();
+    } catch(err) { alert('No se pudo guardar en Sheets: ' + err.message); return; }
+  } else {
+    empleados.push(emp);
+    saveEmps();
+  }
   document.getElementById('emp-nombre').value = '';
   document.getElementById('emp-cargo').value = '';
   document.getElementById('emp-sueldo').value = '';
   renderSueldos();
 }
 
-function eliminarEmpleado(id) {
+async function eliminarEmpleado(id) {
   if(!confirm('¿Eliminar este empleado?')) return;
-  empleados = empleados.filter(e => e.id !== id);
-  saveEmps();
+  if(modoRemoto) {
+    try {
+      await apiPost('deleteEmpleado', { id });
+      await syncFromSheets();
+    } catch(err) { alert('No se pudo eliminar en Sheets: ' + err.message); return; }
+  } else {
+    empleados = empleados.filter(e => String(e.id) !== String(id));
+    saveEmps();
+  }
   renderSueldos();
 }
 
@@ -908,7 +1049,7 @@ function renderSueldos() {
             <div class="emp-role">${e.cargo||'—'}</div>
             <div style="margin-top:8px;font-size:14px;font-weight:600;color:var(--green)">${fmt(e.sueldo)}/mes</div>
           </div>
-          <button class="btn btn-danger btn-sm" onclick="eliminarEmpleado(${e.id})" title="Eliminar"><i class="ti ti-trash"></i></button>
+          <button class="btn btn-danger btn-sm" onclick="eliminarEmpleado('${e.id}')" title="Eliminar"><i class="ti ti-trash"></i></button>
         </div>
       </div>`).join('')}</div>`;
 
@@ -923,6 +1064,7 @@ function renderSueldos() {
 }
 
 function renderConfig() {
+  document.getElementById('sheets-url').value = sheetsUrl;
   ['ingreso','egreso','aporte'].forEach(tipo => {
     const el = document.getElementById('categs-'+tipo);
     el.innerHTML = (categorias[tipo]||[]).map(c => {
@@ -936,20 +1078,38 @@ async function agregarCateg(tipo) {
   const input = document.getElementById('nueva-categ-' + tipo);
   const val = input.value.trim();
   if(!val) return;
-  if(categorias[tipo].includes(val)) { alert('Esa categoría ya existe.'); return; }
-  categorias[tipo].push(val);
-  saveCats();
+  if((categorias[tipo]||[]).includes(val)) { alert('Esa categoría ya existe.'); return; }
+  if(modoRemoto) {
+    try {
+      await apiPost('addCategoria', { tipo, nombre: val });
+      await syncFromSheets();
+    } catch(err) { alert('No se pudo guardar en Sheets: ' + err.message); return; }
+  } else {
+    categorias[tipo].push(val);
+    saveCats();
+  }
   input.value = '';
   renderConfig();
 }
 
-function eliminarCateg(tipo, nombre) {
-  categorias[tipo] = categorias[tipo].filter(c => c !== nombre);
-  saveCats();
+async function eliminarCateg(tipo, nombre) {
+  if(modoRemoto) {
+    try {
+      await apiPost('deleteCategoria', { tipo, nombre });
+      await syncFromSheets();
+    } catch(err) { alert('No se pudo eliminar en Sheets: ' + err.message); return; }
+  } else {
+    categorias[tipo] = categorias[tipo].filter(c => c !== nombre);
+    saveCats();
+  }
   renderConfig();
 }
 
 function borrarTodo() {
+  if(modoRemoto) {
+    alert('Estás conectado a Google Sheets: para borrar datos hacelo directamente en la planilla (así evitamos un borrado accidental de datos compartidos). Podés desconectar Sheets arriba si querés volver a modo local.');
+    return;
+  }
   if(!confirm('¿Seguro que querés borrar TODOS los datos? Esta acción no se puede deshacer.')) return;
   localStorage.removeItem(SK_MOVS);
   localStorage.removeItem(SK_EMPS);
@@ -976,8 +1136,16 @@ function exportarCSV() {
   a.click();
 }
 
-loadData();
-renderInicio();
+(async function init() {
+  loadData();
+  if(modoRemoto) {
+    setConnStatus('off', 'Conectando…');
+    await syncFromSheets();
+  } else {
+    setConnStatus('off');
+  }
+  renderInicio();
+})();
 </script>
 </body>
 </html>
