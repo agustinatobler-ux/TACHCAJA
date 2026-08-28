@@ -8,16 +8,18 @@
 const SHEETS = {
   MOV: 'Movimientos',
   EMP: 'Empleados',
-  CAT: 'Categorias'
+  CAT: 'Categorias',
+  ARQ: 'Arqueos'
 };
 
 const MOV_HEADERS = ['id', 'tipo', 'fecha', 'monto', 'moneda', 'descripcion', 'cuenta', 'cuentaOrigen', 'cuentaDestino', 'categoria', 'empleado', 'socio', 'subTipo'];
 const EMP_HEADERS = ['id', 'nombre', 'cargo', 'sueldo'];
 const CAT_HEADERS = ['tipo', 'nombre'];
+const ARQ_HEADERS = ['id', 'fecha', 'cuenta', 'saldoSistema', 'saldoReal', 'diferencia', 'nota', 'ajustado', 'movimientoId'];
 
 const CATEGORIAS_DEFAULT = {
-  ingreso: ['Ventas', 'Servicios', 'Otros ingresos'],
-  egreso: ['Combustible', 'Alquiler', 'Impuestos', 'Marketing', 'Logística', 'Mantenimiento', 'Repuestos', 'Otros'],
+  ingreso: ['Ventas', 'Servicios', 'Otros ingresos', 'Ajuste de caja'],
+  egreso: ['Combustible', 'Alquiler', 'Impuestos', 'Marketing', 'Logística', 'Mantenimiento', 'Repuestos', 'Otros', 'Ajuste de caja'],
   aporte: ['Aporte entrada', 'Retiro/extracción', 'Capital propio']
 };
 
@@ -54,6 +56,12 @@ function doGet(e) {
         break;
       case 'deleteCategoria':
         result = deleteCategoria(p.tipo, p.nombre);
+        break;
+      case 'addArqueo':
+        result = addArqueo(JSON.parse(p.data));
+        break;
+      case 'deleteArqueo':
+        result = deleteRowById(SHEETS.ARQ, ARQ_HEADERS, p.id);
         break;
       default:
         out = { ok: false, error: 'Acción desconocida: ' + action };
@@ -113,6 +121,7 @@ function getAll() {
   const movSheet = getSheet(SHEETS.MOV, MOV_HEADERS);
   const empSheet = getSheet(SHEETS.EMP, EMP_HEADERS);
   const catSheet = getSheet(SHEETS.CAT, CAT_HEADERS);
+  const arqSheet = getSheet(SHEETS.ARQ, ARQ_HEADERS);
   seedCategoriasSiVacio(catSheet);
 
   const tz = Session.getScriptTimeZone();
@@ -131,8 +140,16 @@ function getAll() {
     if (!categorias[c.tipo]) categorias[c.tipo] = [];
     categorias[c.tipo].push(c.nombre);
   });
+  const arqueos = rowsToObjects(arqSheet, ARQ_HEADERS).map(function (a) {
+    if (a.fecha instanceof Date) a.fecha = Utilities.formatDate(a.fecha, tz, 'yyyy-MM-dd');
+    a.saldoSistema = Number(a.saldoSistema);
+    a.saldoReal = Number(a.saldoReal);
+    a.diferencia = Number(a.diferencia);
+    a.ajustado = (a.ajustado === true || a.ajustado === 'true');
+    return a;
+  });
 
-  return { movimientos: movimientos, empleados: empleados, categorias: categorias };
+  return { movimientos: movimientos, empleados: empleados, categorias: categorias, arqueos: arqueos };
 }
 
 function nuevoId(prefijo) {
@@ -155,6 +172,18 @@ function addEmpleado(data) {
   const sheet = getSheet(SHEETS.EMP, EMP_HEADERS);
   const id = nuevoId('e');
   const row = EMP_HEADERS.map(function (h) {
+    if (h === 'id') return id;
+    return data[h] !== undefined ? data[h] : '';
+  });
+  sheet.appendRow(row);
+  data.id = id;
+  return data;
+}
+
+function addArqueo(data) {
+  const sheet = getSheet(SHEETS.ARQ, ARQ_HEADERS);
+  const id = nuevoId('a');
+  const row = ARQ_HEADERS.map(function (h) {
     if (h === 'id') return id;
     return data[h] !== undefined ? data[h] : '';
   });

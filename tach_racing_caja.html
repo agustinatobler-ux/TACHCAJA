@@ -338,6 +338,7 @@
     <button class="nav-item" onclick="showPage('cargar',this)"><i class="ti ti-plus"></i> Cargar movimiento</button>
     <div class="nav-section">Registros</div>
     <button class="nav-item" onclick="showPage('movimientos',this)"><i class="ti ti-list"></i> Movimientos</button>
+    <button class="nav-item" onclick="showPage('arqueo',this)"><i class="ti ti-scale"></i> Arqueo de caja</button>
     <button class="nav-item" onclick="showPage('sueldos',this)"><i class="ti ti-users"></i> Sueldos</button>
     <div class="nav-section">Reportes</div>
     <button class="nav-item" onclick="showPage('analisis',this)"><i class="ti ti-chart-bar"></i> Análisis</button>
@@ -519,6 +520,77 @@
       </div>
     </div>
 
+    <!-- ARQUEO -->
+    <div id="page-arqueo" class="page">
+      <div class="page-title">Arqueo de caja</div>
+      <div id="arqueo-alert" class="alert"></div>
+      <div class="card">
+        <div class="card-title">Registrar un arqueo</div>
+        <div class="form-row">
+          <div>
+            <label>Cuenta</label>
+            <select id="arqueo-cuenta" onchange="onArqueoCuentaChange()">
+              <option value="BANCO">Banco</option>
+              <option value="CAJA EFECTIVO">Caja Efectivo</option>
+              <option value="MERCADO">Mercado Pago</option>
+              <option value="CAJA DOLARES">Caja Dólares</option>
+            </select>
+          </div>
+          <div>
+            <label>Fecha</label>
+            <input type="date" id="arqueo-fecha">
+          </div>
+        </div>
+        <div class="metric-grid" style="margin-bottom:12px">
+          <div class="metric">
+            <div class="metric-label">Saldo según el sistema</div>
+            <div class="metric-value" id="arqueo-saldo-sistema">$0</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Diferencia</div>
+            <div class="metric-value" id="arqueo-diferencia">$0</div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div>
+            <label>Saldo real (lo que contaste)</label>
+            <input type="number" id="arqueo-saldo-real" placeholder="0.00" step="0.01" oninput="recalcDiferencia()">
+          </div>
+          <div>
+            <label>Nota (opcional)</label>
+            <input type="text" id="arqueo-nota" placeholder="Ej: faltante en caja chica">
+          </div>
+        </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:8px;margin-top:4px">
+          <input type="checkbox" id="arqueo-ajustar" style="width:auto" checked>
+          <label style="margin:0" for="arqueo-ajustar">Generar movimiento de ajuste automáticamente para cuadrar el saldo con lo contado</label>
+        </div>
+        <div style="margin-top:8px">
+          <button class="btn btn-primary" onclick="registrarArqueo()"><i class="ti ti-scale"></i> Registrar arqueo</button>
+        </div>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div class="card-title" style="padding:1.25rem 1.25rem 0">Historial de arqueos</div>
+        <div class="table-wrap">
+          <table class="movs-table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Cuenta</th>
+                <th style="text-align:right">Saldo sistema</th>
+                <th style="text-align:right">Saldo real</th>
+                <th style="text-align:right">Diferencia</th>
+                <th>Nota</th>
+                <th>Ajustado</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="tabla-arqueos"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <!-- ANÁLISIS -->
     <div id="page-analisis" class="page">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:1.5rem">
@@ -623,6 +695,7 @@
   <button class="mobile-nav-item active" onclick="showPage('inicio',this)"><i class="ti ti-home"></i>Inicio</button>
   <button class="mobile-nav-item" onclick="showPage('cargar',this)"><i class="ti ti-plus"></i>Cargar</button>
   <button class="mobile-nav-item" onclick="showPage('movimientos',this)"><i class="ti ti-list"></i>Movimientos</button>
+  <button class="mobile-nav-item" onclick="showPage('arqueo',this)"><i class="ti ti-scale"></i>Arqueo</button>
   <button class="mobile-nav-item" onclick="showPage('analisis',this)"><i class="ti ti-chart-bar"></i>Análisis</button>
   <button class="mobile-nav-item" onclick="showPage('config',this)"><i class="ti ti-settings"></i>Config</button>
 </nav>
@@ -632,11 +705,12 @@ const SK_MOVS = 'tach_movimientos';
 const SK_EMPS = 'tach_empleados';
 const SK_CATS = 'tach_categorias';
 const SK_URL = 'tach_sheets_url';
+const SK_ARQS = 'tach_arqueos';
 
-let movimientos = [], empleados = [], charts = {};
+let movimientos = [], empleados = [], arqueos = [], charts = {};
 const BUILTIN = {
-  ingreso: ['Ventas', 'Servicios', 'Otros ingresos'],
-  egreso: ['Combustible', 'Alquiler', 'Impuestos', 'Marketing', 'Logística', 'Mantenimiento', 'Repuestos', 'Otros'],
+  ingreso: ['Ventas', 'Servicios', 'Otros ingresos', 'Ajuste de caja'],
+  egreso: ['Combustible', 'Alquiler', 'Impuestos', 'Marketing', 'Logística', 'Mantenimiento', 'Repuestos', 'Otros', 'Ajuste de caja'],
   aporte: ['Aporte entrada', 'Retiro/extracción', 'Capital propio']
 };
 let categorias = JSON.parse(JSON.stringify(BUILTIN));
@@ -649,11 +723,13 @@ let modoRemoto = !!sheetsUrl;
 function loadData() {
   try { movimientos = JSON.parse(localStorage.getItem(SK_MOVS)) || []; } catch(e) { movimientos = []; }
   try { empleados = JSON.parse(localStorage.getItem(SK_EMPS)) || []; } catch(e) { empleados = []; }
+  try { arqueos = JSON.parse(localStorage.getItem(SK_ARQS)) || []; } catch(e) { arqueos = []; }
   try { const c = JSON.parse(localStorage.getItem(SK_CATS)); if(c) categorias = c; } catch(e) {}
 }
 function saveMovs() { localStorage.setItem(SK_MOVS, JSON.stringify(movimientos)); }
 function saveEmps() { localStorage.setItem(SK_EMPS, JSON.stringify(empleados)); }
 function saveCats() { localStorage.setItem(SK_CATS, JSON.stringify(categorias)); }
+function saveArqs() { localStorage.setItem(SK_ARQS, JSON.stringify(arqueos)); }
 
 /* ---- Conexión con Google Sheets (Apps Script Web App) ---- */
 
@@ -705,8 +781,9 @@ async function syncFromSheets() {
     const data = await apiGet();
     movimientos = data.movimientos || [];
     empleados = data.empleados || [];
+    arqueos = data.arqueos || [];
     categorias = (data.categorias && Object.keys(data.categorias).length) ? data.categorias : JSON.parse(JSON.stringify(BUILTIN));
-    saveMovs(); saveEmps(); saveCats(); // respaldo local por si se pierde la conexión
+    saveMovs(); saveEmps(); saveArqs(); saveCats(); // respaldo local por si se pierde la conexión
     setConnStatus('ok');
     return true;
   } catch (err) {
@@ -772,11 +849,12 @@ async function showPage(p, btn) {
   document.querySelectorAll('.nav-item, .mobile-nav-item').forEach(el => {
     if(el.getAttribute('onclick') && el.getAttribute('onclick').includes("'"+p+"'")) el.classList.add('active');
   });
-  if(modoRemoto && ['inicio','movimientos','analisis','sueldos'].includes(p)) await syncFromSheets();
+  if(modoRemoto && ['inicio','movimientos','analisis','sueldos','arqueo'].includes(p)) await syncFromSheets();
   if(p === 'inicio') renderInicio();
   if(p === 'movimientos') renderMovimientos();
   if(p === 'analisis') renderAnalisis();
   if(p === 'sueldos') renderSueldos();
+  if(p === 'arqueo') renderArqueo();
   if(p === 'config') renderConfig();
 }
 
@@ -860,6 +938,7 @@ function onTipoChange() {
 }
 
 document.getElementById('fecha').value = new Date().toISOString().slice(0, 10);
+document.getElementById('arqueo-fecha').value = new Date().toISOString().slice(0, 10);
 onTipoChange();
 
 function showAlert(msg, ok=true) {
@@ -1083,6 +1162,122 @@ function renderSueldos() {
     data: { labels: meses.length ? meses.map(m => getMesLabel(m+'-01')) : ['Sin datos'], datasets: [{ data: meses.length ? sd : [0], backgroundColor: '#BA7517', borderRadius: 6, borderWidth: 0 }] },
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { ticks: { callback: v => '$'+Number(v).toLocaleString('es-AR') }, grid: { color: 'rgba(128,128,128,0.1)' } }, x: { grid: { display: false } } } }
   });
+}
+
+/* ---- Arqueo de caja ---- */
+
+function onArqueoCuentaChange() {
+  const cuenta = document.getElementById('arqueo-cuenta').value;
+  const saldoSistema = getSaldos()[cuenta] || 0;
+  document.getElementById('arqueo-saldo-sistema').textContent = fmt(saldoSistema);
+  document.getElementById('arqueo-saldo-sistema').dataset.valor = saldoSistema;
+  recalcDiferencia();
+}
+
+function recalcDiferencia() {
+  const saldoSistema = Number(document.getElementById('arqueo-saldo-sistema').dataset.valor || 0);
+  const saldoRealInput = document.getElementById('arqueo-saldo-real').value;
+  const saldoReal = saldoRealInput === '' ? saldoSistema : parseFloat(saldoRealInput);
+  const dif = saldoReal - saldoSistema;
+  const el = document.getElementById('arqueo-diferencia');
+  el.textContent = (dif > 0 ? '+' : '') + fmt(dif);
+  el.className = 'metric-value ' + (dif === 0 ? '' : (dif > 0 ? 'pos' : 'neg'));
+}
+
+async function registrarArqueo() {
+  const cuenta = document.getElementById('arqueo-cuenta').value;
+  const fecha = document.getElementById('arqueo-fecha').value;
+  const saldoRealInput = document.getElementById('arqueo-saldo-real').value;
+  const nota = document.getElementById('arqueo-nota').value.trim();
+  const generarAjuste = document.getElementById('arqueo-ajustar').checked;
+  if(!fecha || saldoRealInput === '') { showArqueoAlert('Completá la fecha y el saldo real contado.', false); return; }
+
+  const saldoSistema = getSaldos()[cuenta] || 0;
+  const saldoReal = parseFloat(saldoRealInput);
+  const diferencia = Math.round((saldoReal - saldoSistema) * 100) / 100;
+
+  const arqueo = { id: Date.now(), fecha, cuenta, saldoSistema, saldoReal, diferencia, nota, ajustado: false, movimientoId: '' };
+
+  try {
+    if(generarAjuste && diferencia !== 0) {
+      const mov = {
+        id: Date.now(),
+        tipo: diferencia > 0 ? 'ingreso' : 'egreso',
+        fecha, cuenta,
+        monto: Math.abs(diferencia),
+        moneda: 'ARS',
+        categoria: 'Ajuste de caja',
+        descripcion: 'Ajuste por arqueo de caja' + (nota ? ' — ' + nota : '')
+      };
+      if(modoRemoto) {
+        const guardado = await apiPost('addMovimiento', { data: mov });
+        arqueo.movimientoId = guardado.id;
+      } else {
+        movimientos.push(mov);
+        saveMovs();
+        arqueo.movimientoId = mov.id;
+      }
+      arqueo.ajustado = true;
+    }
+    if(modoRemoto) {
+      await apiPost('addArqueo', { data: arqueo });
+      await syncFromSheets();
+    } else {
+      arqueos.push(arqueo);
+      saveArqs();
+    }
+  } catch(err) {
+    showArqueoAlert('No se pudo guardar el arqueo: ' + err.message, false);
+    return;
+  }
+
+  document.getElementById('arqueo-saldo-real').value = '';
+  document.getElementById('arqueo-nota').value = '';
+  showArqueoAlert(diferencia === 0 ? 'Arqueo registrado — no hubo desvío ✓' : 'Arqueo registrado. Desvío: ' + fmt(diferencia));
+  renderArqueo();
+}
+
+async function eliminarArqueo(id) {
+  if(!confirm('¿Eliminar este registro de arqueo? (el movimiento de ajuste que haya generado no se borra)')) return;
+  if(modoRemoto) {
+    try {
+      await apiPost('deleteArqueo', { id });
+      await syncFromSheets();
+    } catch(err) { alert('No se pudo eliminar en Sheets: ' + err.message); return; }
+  } else {
+    arqueos = arqueos.filter(a => String(a.id) !== String(id));
+    saveArqs();
+  }
+  renderArqueo();
+}
+
+function showArqueoAlert(msg, ok = true) {
+  const el = document.getElementById('arqueo-alert');
+  el.className = 'alert ' + (ok ? 'alert-ok' : 'alert-err');
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 4000);
+}
+
+function renderArqueo() {
+  onArqueoCuentaChange();
+  const tb = document.getElementById('tabla-arqueos');
+  const lista = [...arqueos].sort((a,b) => b.fecha.localeCompare(a.fecha) || String(b.id).localeCompare(String(a.id)));
+  if(!lista.length) { tb.innerHTML = '<tr><td colspan="8"><div class="empty">Todavía no registraste ningún arqueo</div></td></tr>'; return; }
+  tb.innerHTML = lista.map(a => {
+    const nombres = { 'BANCO':'Banco', 'CAJA EFECTIVO':'Caja Efectivo', 'MERCADO':'Mercado Pago', 'CAJA DOLARES':'Caja Dólares' };
+    const difClass = a.diferencia === 0 ? '' : (a.diferencia > 0 ? 'amount-pos' : 'amount-neg');
+    return `<tr>
+      <td style="white-space:nowrap;color:var(--text2)">${a.fecha}</td>
+      <td>${nombres[a.cuenta] || a.cuenta}</td>
+      <td style="text-align:right">${fmt(a.saldoSistema)}</td>
+      <td style="text-align:right">${fmt(a.saldoReal)}</td>
+      <td style="text-align:right" class="${difClass}">${a.diferencia>0?'+':''}${fmt(a.diferencia)}</td>
+      <td style="font-size:12px;color:var(--text2)">${a.nota||'—'}</td>
+      <td>${a.ajustado ? '<span class="badge badge-ingreso">Sí</span>' : '<span class="badge" style="background:var(--bg2);color:var(--text2)">No</span>'}</td>
+      <td><button class="btn btn-danger btn-sm" onclick="eliminarArqueo('${a.id}')" title="Eliminar"><i class="ti ti-trash"></i></button></td>
+    </tr>`;
+  }).join('');
 }
 
 function renderConfig() {
