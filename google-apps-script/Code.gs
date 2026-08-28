@@ -21,46 +21,57 @@ const CATEGORIAS_DEFAULT = {
   aporte: ['Aporte entrada', 'Retiro/extracción', 'Capital propio']
 };
 
+/**
+ * Todo pasa por doGet (incluidas las escrituras) para evitar los problemas de
+ * CORS que Apps Script tiene con fetch() desde un sitio en otro dominio.
+ * Si el pedido trae "callback", se responde en formato JSONP (que no está
+ * sujeto a CORS porque se carga como un <script>, no como fetch/XHR).
+ */
 function doGet(e) {
-  const action = e.parameter.action;
-  if (action === 'getAll') return jsonResponse(getAll());
-  return jsonResponse({ error: 'Acción desconocida: ' + action });
-}
-
-function doPost(e) {
+  const p = e.parameter;
+  const action = p.action;
+  let out;
   try {
-    const body = JSON.parse(e.postData.contents);
-    const action = body.action;
     let result;
     switch (action) {
+      case 'getAll':
+        result = getAll();
+        break;
       case 'addMovimiento':
-        result = addMovimiento(body.data);
+        result = addMovimiento(JSON.parse(p.data));
         break;
       case 'deleteMovimiento':
-        result = deleteRowById(SHEETS.MOV, MOV_HEADERS, body.id);
+        result = deleteRowById(SHEETS.MOV, MOV_HEADERS, p.id);
         break;
       case 'addEmpleado':
-        result = addEmpleado(body.data);
+        result = addEmpleado(JSON.parse(p.data));
         break;
       case 'deleteEmpleado':
-        result = deleteRowById(SHEETS.EMP, EMP_HEADERS, body.id);
+        result = deleteRowById(SHEETS.EMP, EMP_HEADERS, p.id);
         break;
       case 'addCategoria':
-        result = addCategoria(body.tipo, body.nombre);
+        result = addCategoria(p.tipo, p.nombre);
         break;
       case 'deleteCategoria':
-        result = deleteCategoria(body.tipo, body.nombre);
+        result = deleteCategoria(p.tipo, p.nombre);
         break;
       default:
-        return jsonResponse({ ok: false, error: 'Acción desconocida: ' + action });
+        out = { ok: false, error: 'Acción desconocida: ' + action };
+        return respond(out, p.callback);
     }
-    return jsonResponse({ ok: true, result: result });
+    out = { ok: true, result: result };
   } catch (err) {
-    return jsonResponse({ ok: false, error: err.message });
+    out = { ok: false, error: err.message };
   }
+  return respond(out, p.callback);
 }
 
-function jsonResponse(obj) {
+function respond(obj, callback) {
+  if (callback) {
+    return ContentService
+      .createTextOutput(callback + '(' + JSON.stringify(obj) + ')')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 

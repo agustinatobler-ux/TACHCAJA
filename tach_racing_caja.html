@@ -641,7 +641,9 @@ const BUILTIN = {
 };
 let categorias = JSON.parse(JSON.stringify(BUILTIN));
 
-let sheetsUrl = localStorage.getItem(SK_URL) || '';
+const DEFAULT_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxbSXl3WlFvnusnCyJ0o9yMNgflbaicOLsHIQv3p24Vmp96I31q9Z9KJ0s1Ojvc_VeH/exec';
+
+let sheetsUrl = localStorage.getItem(SK_URL) || DEFAULT_SHEETS_URL;
 let modoRemoto = !!sheetsUrl;
 
 function loadData() {
@@ -663,16 +665,36 @@ function setConnStatus(estado, msg) {
   el.onclick = () => showPage('config', document.querySelector('.nav-item[onclick*="config"]'));
 }
 
+/**
+ * Google Apps Script + fetch() choca con CORS desde otro dominio (netlify.app).
+ * Usamos JSONP en su lugar: se carga la respuesta como un <script>, algo que
+ * el navegador nunca bloquea por CORS.
+ */
+let _jsonpN = 0;
+function jsonp(params) {
+  return new Promise((resolve, reject) => {
+    const cb = 'tachCb_' + (_jsonpN++) + '_' + Date.now();
+    const script = document.createElement('script');
+    const timer = setTimeout(() => { cleanup(); reject(new Error('Tiempo de espera agotado. Revisá tu conexión a internet.')); }, 15000);
+    function cleanup() { delete window[cb]; script.remove(); clearTimeout(timer); }
+    window[cb] = (data) => { cleanup(); resolve(data); };
+    const qs = new URLSearchParams(Object.assign({}, params, { callback: cb })).toString();
+    script.src = sheetsUrl + (sheetsUrl.includes('?') ? '&' : '?') + qs;
+    script.onerror = () => { cleanup(); reject(new Error('No se pudo cargar la URL. Revisá que esté bien copiada y publicada como "Cualquier usuario".')); };
+    document.body.appendChild(script);
+  });
+}
+
 async function apiGet() {
-  const res = await fetch(sheetsUrl + '?action=getAll');
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  return res.json();
+  const data = await jsonp({ action: 'getAll' });
+  if (!data.ok) throw new Error(data.error || 'Error desconocido');
+  return data.result;
 }
 
 async function apiPost(action, extra) {
-  const res = await fetch(sheetsUrl, { method: 'POST', body: JSON.stringify(Object.assign({ action }, extra)) });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  const data = await res.json();
+  const params = Object.assign({ action }, extra || {});
+  if (params.data && typeof params.data === 'object') params.data = JSON.stringify(params.data);
+  const data = await jsonp(params);
   if (!data.ok) throw new Error(data.error || 'Error desconocido');
   return data.result;
 }
